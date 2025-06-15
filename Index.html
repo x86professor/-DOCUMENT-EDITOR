@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Real-Time Collaborative Document Editor</title>
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css">
+  <style>
+    
+  </style>
+</head>
+<body>
+  <header role="banner" aria-label="Application Header">
+    <div class="title">
+      <span class="material-icons" aria-hidden="true">edit_note</span>
+      Real-Time Collaborative Document Editor
+    </div>
+  </header>
+  <main>
+    <section id="sidebar-left" aria-label="Calendar and upcoming events">
+      <h2>Mini Calendar</h2>
+      <div class="mini-calendar" aria-live="polite" aria-atomic="true"></div>
+      <h2>Calendars</h2>
+      <div class="calendar-list" role="list" aria-label="Available calendars"></div>
+      <h2>Upcoming Events</h2>
+      <div class="upcoming-events" role="list" aria-label="Upcoming events"></div>
+    </section>
+    <section id="editor-container" aria-label="Document editor and controls">
+      <header id="editor-header" aria-label="Editor controls">
+        <span>Document</span>
+        <div style="display:flex; align-items:center; gap:12px;">
+          <button id="undo-btn" aria-label="Undo" title="Undo"><span class="material-icons">undo</span></button>
+          <button id="redo-btn" aria-label="Redo" title="Redo"><span class="material-icons">redo</span></button>
+          <button id="clear-btn" aria-label="Clear Document" title="Clear Document"><span class="material-icons">delete_sweep</span></button>
+        </div>
+      </header>
+      <div id="editor" contenteditable="true" spellcheck="false" aria-multiline="true" role="textbox" data-placeholder="Start typing your collaborative document here..."></div>
+    </section>
+    <aside id="sidebar-right" aria-label="Event creation and attendees">
+      <div id="attendees-panel">
+        <h2>Active Users</h2>
+        <div id="attendees-list" role="list" aria-live="polite" aria-atomic="true"></div>
+      </div>
+      <div id="event-creation-panel" aria-label="New event creation form">
+        <h3>Create Event</h3>
+        <form id="event-form">
+          <label for="event-title">Title</label>
+          <input type="text" id="event-title" name="title" placeholder="Event title" required />
+          <label for="event-desc">Description</label>
+          <textarea id="event-desc" name="description" placeholder="Event description"></textarea>
+          <label for="event-start">Start Date & Time</label>
+          <input type="datetime-local" id="event-start" name="startDate" required />
+          <label for="event-end">End Date & Time</label>
+          <input type="datetime-local" id="event-end" name="endDate" required />
+          <label for="event-location">Location</label>
+          <input type="text" id="event-location" name="location" placeholder="Location" />
+          <label for="event-category">Category</label>
+          <select id="event-category" name="category" required>
+            <option value="default" selected>Default</option>
+            <option value="meeting">Meeting</option>
+            <option value="call">Call</option>
+            <option value="holiday">Holiday</option>
+            <option value="birthday">Birthday</option>
+          </select>
+          <button type="submit">Add Event</button>
+        </form>
+      </div>
+    </aside>
+  </main>
+  <script>
+    (() => {
+      // Initial dummy data for calendars & events
+      const calendars = [
+        { id: 'primary', name: 'Personal', color: '#7c3aed', isVisible: true, isDefault: true, owner: 'You' },
+        { id: 'work', name: 'Work', color: '#2563eb', isVisible: true, isDefault: false, owner: 'Team' },
+        { id: 'team', name: 'Team', color: '#16a34a', isVisible: true, isDefault: false, owner: 'Team' },
+      ];
+
+      const events = [
+        { id: 'e1', title: 'Team Meeting', description: 'Discuss project milestones', startDate: new Date().toISOString(), endDate: new Date(new Date().getTime() + 3600000).toISOString(), location: 'Zoom', category: 'meeting', calendarId: 'work' },
+        { id: 'e2', title: 'Doctor Appointment', description: '', startDate: new Date(new Date().getTime() + 86400000).toISOString(), endDate: new Date(new Date().getTime() + 90000000).toISOString(), location: 'Clinic', category: 'default', calendarId: 'primary' },
+      ];
+
+      // To simulate multiple users, generate some dummy active users
+      const users = [
+        { id: 'u1', name: 'Alice', color: '#7c3aed', online: true },
+        { id: 'u2', name: 'Bob', color: '#2563eb', online: true },
+        { id: 'u3', name: 'Carol', color: '#16a34a', online: false },
+      ];
+
+      const attendeesListEl = document.getElementById('attendees-list');
+      const editorEl = document.getElementById('editor');
+      const calendarListEl = document.querySelector('.calendar-list');
+      const upcomingEventsEl = document.querySelector('.upcoming-events');
+      const miniCalendarEl = document.querySelector('.mini-calendar');
+
+      let undoStack = [];
+      let redoStack = [];
+      let isTyping = false;
+      let currentUserId = 'u1'; // Current user Alice
+
+      // Render attendees
+      function renderAttendees() {
+        attendeesListEl.innerHTML = '';
+        users.forEach(user => {
+          const div = document.createElement('div');
+          div.className = 'attendee-item';
+          div.setAttribute('role', 'listitem');
+          const avatar = document.createElement('div');
+          avatar.className = 'attendee-avatar';
+          avatar.style.backgroundColor = user.color;
+          avatar.textContent = user.name.charAt(0);
+          const name = document.createElement('div');
+          name.className = 'attendee-name';
+          name.textContent = user.name;
+          const status = document.createElement('div');
+          status.className = 'attendee-status ' + (user.online ? 'status-online' : 'status-offline');
+          status.textContent = user.online ? 'online' : 'offline';
+          div.appendChild(avatar);
+          div.appendChild(name);
+          div.appendChild(status);
+          attendeesListEl.appendChild(div);
+        });
+      }
+
+      // Render calendar list
+      function renderCalendarList() {
+        calendarListEl.innerHTML = '';
+        calendars.forEach(cal => {
+          const div = document.createElement('div');
+          div.className = 'calendar-list-item';
+          div.style.opacity = cal.isVisible ? '1' : '0.4';
+          div.setAttribute('role', 'listitem');
+          div.tabIndex = 0;
+          div.addEventListener('click', () => {
+            cal.isVisible = !cal.isVisible;
+            renderCalendarList();
+            renderUpcomingEvents();
+          });
+          const colorCircle = document.createElement('div');
+          colorCircle.className = 'calendar-color';
+          colorCircle.style.background = cal.color;
+          const nameSpan = document.createElement('span');
+          nameSpan.textContent = cal.name;
+          div.appendChild(colorCircle);
+          div.appendChild(nameSpan);
+          calendarListEl.appendChild(div);
+        });
+      }
+
+      // Render upcoming events for visible calendars sorted by date ascending
+      function renderUpcomingEvents() {
+        upcomingEventsEl.innerHTML = '';
+        const visibleCalendarIds = calendars.filter(c => c.isVisible).map(c => c.id);
+        const futureEvents = events
+          .filter(ev => visibleCalendarIds.includes(ev.calendarId) && new Date(ev.startDate) >= new Date())
+          .sort((a,b) => new Date(a.startDate) - new Date(b.startDate))
+          .slice(0, 5);
+        if (futureEvents.length === 0) {
+          const noEv = document.createElement('div');
+          noEv.textContent = 'No upcoming events';
+          noEv.style.color = '#888';
+          upcomingEventsEl.appendChild(noEv);
+          return;
+        }
+        futureEvents.forEach(ev => {
+          const div = document.createElement('div');
+          div.className = 'upcoming-event';
+          const date = new Date(ev.startDate);
+          div.textContent = `${date.toLocaleDateString(undefined, {month:'short', day:'numeric'})} - ${ev.title}`;
+          upcomingEventsEl.appendChild(div);
+        });
+      }
+
+      // Render mini calendar for current month with today's date highlight
+      function renderMiniCalendar() {
+        miniCalendarEl.innerHTML = '';
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = now.getMonth();
+        const firstDay = new Date(year, month, 1);
+        const lastDay = new Date(year, month + 1, 0);
+        const startDayOfWeek = firstDay.getDay();
+        const daysInMonth = lastDay.getDate();
+
+        const table = document.createElement('table');
+        const thead = document.createElement('thead');
+        const headers = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+        const trHead = document.createElement('tr');
+        headers.forEach(h => {
+          const th = document.createElement('th');
+          th.textContent = h;
+          trHead.appendChild(th);
+        });
+        thead.appendChild(trHead);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        let tr = document.createElement('tr');
+        // Fill initial empty cells
+        for (let empty = 0; empty < startDayOfWeek; empty++) {
+          const td = document.createElement('td');
+          td.classList.add('empty');
+          tr.appendChild(td);
+        }
+        for (let day = 1; day <= daysInMonth; day++) {
+          if ((tr.children.length + 1) > 7) {
+            tbody.appendChild(tr);
+            tr = document.createElement('tr');
+          }
+          const td = document.createElement('td');
+          td.textContent = day;
+          if (day === now.getDate()) {
+            td.classList.add('today');
+            td.setAttribute('aria-current', 'date');
+          }
+          tr.appendChild(td);
+        }
+        // Fill trailing empty cells if row incomplete
+        while(tr.children.length < 7) {
+          const td = document.createElement('td');
+          td.classList.add('empty');
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+        table.appendChild(tbody);
+        miniCalendarEl.appendChild(table);
+      }
+
+      // Debounce utility
+      function debounce(func, wait) {
+        let timeout;
+        return function(...args) {
+          clearTimeout(timeout);
+          timeout = setTimeout(() => func.apply(this, args), wait);
+        };
+      }
+
+      // Save current editor content to localStorage
+      function saveToStorage() {
+        localStorage.setItem('collab-doc-content', editorEl.innerHTML);
+      }
+      // Load content from localStorage
+      function loadFromStorage() {
+        return localStorage.getItem('collab-doc-content');
+      }
+
+      // Undo stack operations
+      function pushUndo() {
+        if (undoStack.length >= 50) undoStack.shift(); 
+        undoStack.push(editorEl.innerHTML);
+      }
+      function undo() {
+        if (undoStack.length > 0) {
+          redoStack.push(editorEl.innerHTML);
+          const last = undoStack.pop();
+          editorEl.innerHTML = last || '';
+          placeCaretAtEnd(editorEl);
+          saveToStorage();
+        }
+      }
+      function redo() {
+        if (redoStack.length > 0) {
+          undoStack.push(editorEl.innerHTML);
+          const last = redoStack.pop();
+          editorEl.innerHTML = last || '';
+          placeCaretAtEnd(editorEl);
+          saveToStorage();
+        }
+      }
+
+      // Place caret at end of contenteditable div
+      function placeCaretAtEnd(el) {
+        el.focus();
+        if (typeof window.getSelection != 'undefined'
+            && typeof document.createRange != 'undefined') {
+          var range = document.createRange();
+          range.selectNodeContents(el);
+          range.collapse(false);
+          var sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      }
+
+      // Initialize editor content and stacks
+      function initEditorContent() {
+        const saved = loadFromStorage();
+        if (saved) editorEl.innerHTML = saved;
+        else editorEl.innerHTML = '';
+        undoStack = [];
+        redoStack = [];
+        pushUndo();
+      }
+
+      // Collaborative simulation: Listen for content changes and sync via storage event
+      window.addEventListener('storage', (e) => {
+        if (e.key === 'collab-doc-content' && e.newValue !== editorEl.innerHTML) {
+          editorEl.innerHTML = e.newValue;
+          placeCaretAtEnd(editorEl);
+          pushUndo();
+        }
+      });
+
+      // Editor input handler with debounce to save
+      const saveDebounced = debounce(() => {
+        pushUndo();
+        saveToStorage();
+      }, 400);
+      editorEl.addEventListener('input', () => {
+        saveDebounced();
+      });
+
+      // Editor keydown handler to clear redo stack on new typing
+      editorEl.addEventListener('keydown', () => {
+        redoStack = [];
+      });
+
+      // Toolbar buttons event listeners
+      document.getElementById('undo-btn').addEventListener('click', () => {
+        undo();
+      });
+      document.getElementById('redo-btn').addEventListener('click', () => {
+        redo();
+      });
+      document.getElementById('clear-btn').addEventListener('click', () => {
+        if (confirm('Clear entire document? This action cannot be undone.')) {
+          editorEl.innerHTML = '';
+          pushUndo();
+          saveToStorage();
+        }
+      });
+
+      // Event form submission to add event dummy functionality
+      const eventForm = document.getElementById('event-form');
+      eventForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const data = new FormData(eventForm);
+        const newEvent = {
+          id: crypto.randomUUID(),
+          title: data.get('title'),
+          description: data.get('description') || '',
+          startDate: data.get('startDate'),
+          endDate: data.get('endDate'),
+          location: data.get('location') || '',
+          category: data.get('category') || 'default',
+          calendarId: 'primary'
+        };
+        events.push(newEvent);
+        renderUpcomingEvents();
+        eventForm.reset();
+        alert('Event added. Note: This is a frontend demo only.');
+      });
+
+      // Initialization
+      renderAttendees();
+      renderCalendarList();
+      renderUpcomingEvents();
+      renderMiniCalendar();
+      initEditorContent();
+
+      // Periodically simulate user presence changes
+      setInterval(() => {
+        // Toggle random user online/offline to simulate presence change
+        const idx = Math.floor(Math.random() * users.length);
+        users[idx].online = !users[idx].online;
+        renderAttendees();
+      }, 15000);
+
+    })();
+  </script>
+</body>
+</html>
+
